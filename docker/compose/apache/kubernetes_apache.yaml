@@ -1,0 +1,198 @@
+# 3 Contenedores:
+#       miapache -> Mínimo 2.... dependiendo de la carga de trabajo montaré más.
+#       filebeat -> Tantos como apaches.
+#       logstash -> 2
+# 5 nodos físicos en mi cluster de kubernetes
+#   Nodo 1: miapache + filebeat
+#   Nodo 2: miapache + filebeat
+#   Nodo 3: logstash
+#   Nodo 4: logstash
+#   Nodo 5: vacio
+# 2 Servicios: 
+#   Servicio 1: WEB acceso a la pagina web (apache)           PUBLICO ??? SI
+#   Servicio 2: Logstash: Quien accede al logstash? FILEBEAT. PUBLICO ??? NO
+#   Filebeat. Quien accede a fileat???  NADIE : NO ES UN SERVICIO QUE OFREZCO
+# Clientes... MUCHOS !!!
+
+# IP para acceder a los servicios del cluster de kubernetes
+# Tengo red virtual?: SI, pero una red virtual a lo largo del cluster
+
+# Que IPS tengo en esa red asignadas???
+# Nodo 1 tiene IP en la red virtual: SI
+# Nodo 2 tiene IP en la red virtual: SI
+# Nodo 3 tiene IP en la red virtual: SI
+# Nodo 4 tiene IP en la red virtual: SI
+# Nodo 5 tiene IP en la red virtual: SI
+# Pod Apache 1 Tiene una IP
+    # Contenedor APACHE 1: NO
+        # Desde el contenedor Apache1, quiero acceder al puerto 9876 del contenedor Filebeat
+        # Tendria que escribir localhost:9876
+    # Contenedor FILEBEAT 1: NO
+        # Desde el contenedor filebeat 1 quiero acceder al servicio de logstash
+        # Donde voy??? IP Balanceador logstash: 5044 
+# Pod Apache 2 Tiene una IP
+# Pod Logstash 1 Tiene una IP
+# Pod Logstash 2 Tiene una IP
+# Servicio WEB ( BALANCEADOR ): Tiene su propia IP
+# Servicio Logstash ( BALANCEADOR ): Tiene su propia IP
+
+# Muchos ficheros: 4 documento: 2 Servicios + 2 Pods: Cada uno es un documento
+# En YAML podemos meter varios documentos en un unico fichero
+# Los documentos los separaro con ---
+---
+# Servicio WEB:      PUBLICO
+apiVersion: v1
+kind: Service
+metadata: # Atributos, etiquetas relacionadas con el objeto que defino
+    name: servicio_apache
+spec:
+    #type: NodePort # PELIGROSO !!!!!!!
+    # NO VA A SER LA PRACTICA HABITUAL. Ataco a una única maquina (IP)
+    
+    type: LoadBalancer # "A priori" solo funciona con CLOUDS PUBLICOS
+    # Se va a asignar una IP publica (OTORGADA POR EL CLOUD PUBLICO) 
+    # como IP publica del balanceador
+    # Balanceador IP publica
+    # Cuando queremos loadBalancer en una instalación on premises... 
+    # hay que tirar de plugins para generar las IPS publica
+    # POR CADA IP publica la FACTURA SUBE XXXX €
+    # Solo quiero 1 IP Publica <- INGRESS !!!
+    # IP publica: 8.9.8.7
+    # http://8.9.8.7/elastic   ->  Balanceador Privado (IPCluster) servidio elastic
+    # http://8.9.8.7/apache    ->  Balanceador Privado (IPCluster) servidio apache
+    
+    ports:
+        - targetPort: 80
+          port: 80 # <- SIEMPRE ESTA EN UNA IP PRIVADA
+    #      nodePort: 30000 # 30000-32XXX
+          # Abre el puerto 30000 en las IPS publicas de los nodos del cluster y 
+          # las peticiones que lleguen ahi, se redirigen al balanceador (IP privada)
+    selector:
+        app: logstash
+---
+# Servicio Logstash: PRIVADO
+apiVersion: v1
+kind: Service
+metadata: # Atributos, etiquetas relacionadas con el objeto que defino
+    name: servicio_logstash
+spec:
+    # type: ClusterIP <- Por defcto un servicio es de tipo CLUSTERIP = PRIVADOS
+    ports:
+          # Logstash 1: 5044
+          # Logstash 2: 5044
+        - targetPort: 5044
+          # La cola: Tiene su propia IP. El balanceador.
+          # Dentro de esa IP la cola está corriendo en un puerto#
+          # Puerto del Balanceador de carga
+          port: 5044
+    selector:
+        app: logstash
+        
+---
+# Pod1: 
+    # Contenedor1: miapache
+    # Contenedor2: filebeat
+apiVersion: v1
+kind: Pod
+metadata: # Atributos, etiquetas relacionadas con el objeto que defino
+    name: pod_apache
+spec:
+    containers: # Procesos aislados que arrancan y no paran
+        - name: contenedor_apache
+          image: httpd
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: logs
+              mountPath: /logs # Ruta dentro del contenedor
+            - name: fichero_apache
+              mountPath: /usr/local/apache2/conf/httpd.conf # Ruta dentro del contenedor
+        - name: contenedor_filebeat
+          image: docker.elastic.co/beats/filebeat:7.8.0
+          volumeMounts:
+            - name: logs
+              mountPath: /logs # Podrian ser rutas distintas
+            - name: fichero_filebeat
+              mountPath: /usr/share/filebeat/filebeat.yml
+    initContainers: # Procesos aislados que arrancan y ACABA
+    # Despues de acabar todos los init containers que se ejecutan SECUENCIALMENTE,
+    # Se inician los Containers
+        # Nos vamos de definir un contenedor inicial, para que clone el repo
+        - name: ClonadorConfigApache
+          image: ubuntu
+          # | Permite meter varias lineas (se mantiene el resultado en varias lineas)
+          # > Permite meter varias lineas (el resultado se aplana a 1 linea)
+          command: >
+            ['sh' , '-c' , 'apt update -y && apt install git -y && 
+            git clone https://github.com/IvanciniGT/dockerToKubernetes_ApacheConfig /apache']
+          volumeMounts:
+            - name: fichero_apache
+              mountPath: /apache/httpd.conf
+            - name: fichero_filebeat
+              mountPath: /apache/filebeat.yml
+
+    volumes:
+        - name: logs
+          # donde??? Maquina fisica, red, cloud, cabina
+          # La quiero en la máquina física en este caso concreto
+          emptyDir: #{}
+            medium: Memory # Velocidad
+        - name: fichero_apache
+          emptyDir: {}
+        - name: fichero_filebeat
+          emptyDir: {}
+          # Alternativas: Montar una carpeta NFS <- RUINA
+          # Alternativas: Montar una imagen nueva del contenedor con el archivo incrustado
+          # GIT : Repo con el archivo <- IDEAL !!!!
+          #hostPath:
+          #  path: /home/ubuntu/envirnment/curso/docker/compose/apache/httpd.conf
+          #  type: File
+---
+# Pod2:
+    # Contenedor3: logstash
+apiVersion: v1
+kind: Pod
+metadata: # Atributos, etiquetas relacionadas con el objeto que defino
+    name: pod_logstash
+    labels:
+        app: logstash
+spec:
+    containers:
+        - name: contenedor_logstash
+          image: docker.elastic.co/logstash/logstash:7.8.0
+          ports:
+            - containerPort: 5044
+          env:
+            - name: MONITORING_ENABLED
+              value: 'false'
+          volumeMounts:
+            - name: fichero_logstash
+              mountPath: /usr/share/logstash/pipeline/logstash.conf
+    initContainers:
+        - name: ClonadorConfigLogstash
+          image: ubuntu
+          command: >
+            ['sh' , '-c' , 'apt update -y && apt install git -y && 
+            git clone https://github.com/IvanciniGT/dockerToKubernetes_ApacheConfig /logstash']
+          volumeMounts:
+            - name: fichero_logstash
+              mountPath: /logstash/logstash.conf
+    volumes:
+        - name: fichero_logstash
+          emptyDir: {}
+---
+
+# cli              servicio de docker
+#  v                       v
+#docker run        ->   dockerd 
+#
+# cli              servicio de docker
+#  v                       v
+#docker-compose    ->   dockerd
+#
+# cli            servicio de kubernetes          servicio de docker
+#  v                 v                                  v
+#kubectl     ->   kubelet                    ->      dockerd                 ->   containerd       ->        runc 
+#                (1 por maquina)                     (1 por maquina)              (1 por maquina)            (1 por contenedor)        
+# kubectl apply -f NOMBRE_FICHERO
+# docker-compose -f NOMBRE_FICHERO up

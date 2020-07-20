@@ -1,0 +1,14 @@
+minginx_service:
+        container_name: minginx
+        volumes:
+            - /home/ubuntu/environment/curso:/elcurso
+        ports: 
+            - 0.0.0.0:8080:80 # Estos son los puertos que mapeo
+        environment:
+#            - VAR1=mivariable
+#            - VAR2=mivariable
+#            - VAR3=mivariable
+            VAR1: mivariable
+            VAR2: mivariable
+            VAR3: mivariable
+        image: nginx

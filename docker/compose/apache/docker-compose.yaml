@@ -1,0 +1,24 @@
+version: '3'
+
+services:
+    miapache_service:
+        container_name: miapache
+        ports: 
+            - 0.0.0.0:8080:80
+        image: httpd
+        volumes:
+            - ./httpd.conf:/usr/local/apache2/conf/httpd.conf
+            - ./logs:/logs
+    filebeat_service:
+        container_name: filebeat
+        image: docker.elastic.co/beats/filebeat:7.8.0 #store/elastic/filebeat:7.8.0
+        volumes:
+            - ./filebeat/filebeat.yaml:/usr/share/filebeat/filebeat.yml
+            - ./logs:/logs
+    logstash_service:
+        container_name: logstash
+        volumes:
+            - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+        image: docker.elastic.co/logstash/logstash:7.8.0
+        environment:
+            MONITORING_ENABLED: 'false'
